@@ -12,6 +12,50 @@ type Message = {
   role: 'user' | 'assistant'
   content: string
   attachments?: Attachment[]
+  apiContent?: string
+  model?: string
+}
+
+type OllamaMessage = {
+  role: 'user' | 'assistant'
+  content: string
+  images?: string[]
+}
+
+const TEXT_MODEL = 'llama3.2:1b'
+const VISION_MODEL = 'gemma3:4b'
+
+const MAX_IMAGE_SIZE = 10 * 1024 * 1024
+const MAX_TEXT_SIZE = 100_000
+
+function imageToBase64(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+
+    reader.onload = () => {
+      const result = reader.result
+
+      if (typeof result !== 'string') {
+        reject(new Error('Could not read the image.'))
+        return
+      }
+
+      const base64 = result.split(',')[1]
+
+      if (!base64) {
+        reject(new Error('Image conversion failed.'))
+        return
+      }
+
+      resolve(base64)
+    }
+
+    reader.onerror = () => {
+      reject(new Error('Failed to load the image.'))
+    }
+
+    reader.readAsDataURL(file)
+  })
 }
 
 function App() {
@@ -27,10 +71,12 @@ function App() {
   const galleryRef = useRef<HTMLInputElement>(null)
   const filesRef = useRef<HTMLInputElement>(null)
   const videoRef = useRef<HTMLVideoElement>(null)
+
   const recorderRef = useRef<MediaRecorder | null>(null)
   const audioChunksRef = useRef<Blob[]>([])
   const audioStreamRef = useRef<MediaStream | null>(null)
   const cameraStreamRef = useRef<MediaStream | null>(null)
+
   const attachmentsRef = useRef<Attachment[]>([])
   const messagesRef = useRef<Message[]>([])
   const chatEndRef = useRef<HTMLDivElement>(null)
@@ -41,26 +87,39 @@ function App() {
 
   useEffect(() => {
     messagesRef.current = messages
+
     chatEndRef.current?.scrollIntoView({
       behavior: 'smooth',
     })
   }, [messages, loading])
 
   useEffect(() => {
-    if (cameraOpen && videoRef.current && cameraStreamRef.current) {
+    if (
+      cameraOpen &&
+      videoRef.current &&
+      cameraStreamRef.current
+    ) {
       videoRef.current.srcObject = cameraStreamRef.current
+
       void videoRef.current.play().catch(console.error)
     }
   }, [cameraOpen])
 
   useEffect(() => {
     return () => {
-      audioStreamRef.current?.getTracks().forEach(track => track.stop())
-      cameraStreamRef.current?.getTracks().forEach(track => track.stop())
+      audioStreamRef.current
+        ?.getTracks()
+        .forEach(track => track.stop())
+
+      cameraStreamRef.current
+        ?.getTracks()
+        .forEach(track => track.stop())
 
       const allAttachments = [
         ...attachmentsRef.current,
-        ...messagesRef.current.flatMap(message => message.attachments || []),
+        ...messagesRef.current.flatMap(
+          message => message.attachments || []
+        ),
       ]
 
       allAttachments.forEach(attachment => {
@@ -72,7 +131,23 @@ function App() {
   }, [])
 
   function addFiles(files: File[]) {
-    const newAttachments: Attachment[] = files.map(file => ({
+    const validFiles: File[] = []
+
+    for (const file of files) {
+      if (
+        file.type.startsWith('image/') &&
+        file.size > MAX_IMAGE_SIZE
+      ) {
+        setMediaError(
+          `${file.name} is too large. Maximum image size is 10 MB.`
+        )
+        continue
+      }
+
+      validFiles.push(file)
+    }
+
+    const newAttachments: Attachment[] = validFiles.map(file => ({
       id: crypto.randomUUID(),
       file,
       previewUrl:
@@ -82,9 +157,16 @@ function App() {
           : undefined,
     }))
 
-    setAttachments(previous => [...previous, ...newAttachments])
+    setAttachments(previous => [
+      ...previous,
+      ...newAttachments,
+    ])
+
     setMenuOpen(false)
-    setMediaError('')
+
+    if (validFiles.length === files.length) {
+      setMediaError('')
+    }
   }
 
   function removeAttachment(id: string) {
@@ -108,12 +190,15 @@ function App() {
       }
 
       if (typeof MediaRecorder === 'undefined') {
-        throw new Error('Audio recording is not supported.')
+        throw new Error(
+          'Audio recording is not supported by this browser.'
+        )
       }
 
-      const stream = await navigator.mediaDevices.getUserMedia({
-        audio: true,
-      })
+      const stream =
+        await navigator.mediaDevices.getUserMedia({
+          audio: true,
+        })
 
       audioStreamRef.current = stream
       audioChunksRef.current = []
@@ -128,10 +213,13 @@ function App() {
       }
 
       recorder.onstop = () => {
-        const mimeType = recorder.mimeType || 'audio/webm'
-        const blob = new Blob(audioChunksRef.current, {
-          type: mimeType,
-        })
+        const mimeType =
+          recorder.mimeType || 'audio/webm'
+
+        const blob = new Blob(
+          audioChunksRef.current,
+          { type: mimeType }
+        )
 
         if (blob.size > 0) {
           const extension = mimeType.includes('mp4')
@@ -148,6 +236,7 @@ function App() {
         }
 
         stream.getTracks().forEach(track => track.stop())
+
         audioStreamRef.current = null
         recorderRef.current = null
       }
@@ -156,12 +245,17 @@ function App() {
       setRecording(true)
     } catch (error) {
       console.error(error)
+
       setMediaError(
         error instanceof Error
           ? error.message
           : 'Could not access microphone.'
       )
-      audioStreamRef.current?.getTracks().forEach(track => track.stop())
+
+      audioStreamRef.current
+        ?.getTracks()
+        .forEach(track => track.stop())
+
       audioStreamRef.current = null
       setRecording(false)
     }
@@ -171,6 +265,7 @@ function App() {
     if (recorderRef.current?.state === 'recording') {
       recorderRef.current.stop()
     }
+
     setRecording(false)
   }
 
@@ -184,14 +279,16 @@ function App() {
         throw new Error('Camera access is unavailable.')
       }
 
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: true,
-      })
+      const stream =
+        await navigator.mediaDevices.getUserMedia({
+          video: true,
+        })
 
       cameraStreamRef.current = stream
       setCameraOpen(true)
     } catch (error) {
       console.error(error)
+
       setMediaError(
         error instanceof Error
           ? error.message
@@ -201,7 +298,10 @@ function App() {
   }
 
   function closeCamera() {
-    cameraStreamRef.current?.getTracks().forEach(track => track.stop())
+    cameraStreamRef.current
+      ?.getTracks()
+      .forEach(track => track.stop())
+
     cameraStreamRef.current = null
 
     if (videoRef.current) {
@@ -217,32 +317,41 @@ function App() {
     if (!video || !video.videoWidth) return
 
     const canvas = document.createElement('canvas')
+
     canvas.width = video.videoWidth
     canvas.height = video.videoHeight
 
     const context = canvas.getContext('2d')
+
     if (!context) return
 
     context.drawImage(video, 0, 0)
 
-    canvas.toBlob(blob => {
-      if (!blob) return
+    canvas.toBlob(
+      blob => {
+        if (!blob) return
 
-      const file = new File(
-        [blob],
-        `LocalMind-photo-${Date.now()}.jpg`,
-        { type: 'image/jpeg' }
-      )
+        const file = new File(
+          [blob],
+          `LocalMind-photo-${Date.now()}.jpg`,
+          { type: 'image/jpeg' }
+        )
 
-      addFiles([file])
-      closeCamera()
-    }, 'image/jpeg', 0.9)
+        addFiles([file])
+        closeCamera()
+      },
+      'image/jpeg',
+      0.9
+    )
   }
 
   async function sendMessage() {
     const question = input.trim()
 
-    if ((!question && attachments.length === 0) || loading) {
+    if (
+      (!question && attachments.length === 0) ||
+      loading
+    ) {
       return
     }
 
@@ -254,103 +363,178 @@ function App() {
       attachments: selectedAttachments,
     }
 
-    const updatedMessages = [...messages, userMessage]
+    setMessages(previous => [
+      ...previous,
+      userMessage,
+    ])
 
-    setMessages(updatedMessages)
     setInput('')
     setAttachments([])
     setMenuOpen(false)
+    setMediaError('')
     setLoading(true)
 
     try {
-      const textFiles = selectedAttachments.filter(attachment =>
-        /\.(txt|md)$/i.test(attachment.file.name)
+      // STEP 1: Find attached images
+      const imageAttachments = selectedAttachments.filter(
+        attachment =>
+          attachment.file.type.startsWith('image/')
+      )
+
+      // STEP 2: Convert images to Base64
+      const images = await Promise.all(
+        imageAttachments.map(attachment =>
+          imageToBase64(attachment.file)
+        )
+      )
+
+      // STEP 3: Read supported text documents
+      const textAttachments = selectedAttachments.filter(
+        attachment =>
+          /\.(txt|md)$/i.test(attachment.file.name)
       )
 
       const extractedTexts = await Promise.all(
-        textFiles.map(async attachment => {
-          if (attachment.file.size > 100_000) {
-            return `[${attachment.file.name}: too large to read]`
+        textAttachments.map(async attachment => {
+          if (attachment.file.size > MAX_TEXT_SIZE) {
+            return (
+              `File: ${attachment.file.name}\n` +
+              'This file is too large to process.'
+            )
           }
 
           const text = await attachment.file.text()
 
-          return `File: ${attachment.file.name}\n${text}`
+          return (
+            `File: ${attachment.file.name}\n` +
+            text
+          )
         })
       )
 
-      const unsupportedFiles = selectedAttachments.filter(
-        attachment => !/\.(txt|md)$/i.test(attachment.file.name)
-      )
+      // STEP 4: Identify unsupported attachments
+      const unsupportedAttachments =
+        selectedAttachments.filter(
+          attachment =>
+            !attachment.file.type.startsWith('image/') &&
+            !/\.(txt|md)$/i.test(attachment.file.name)
+        )
 
-      const attachmentNotes = unsupportedFiles.map(
-        attachment =>
-          `[Attachment: ${attachment.file.name}. Its contents are not available to this text-only AI model.]`
-      )
+      const attachmentNotes =
+        unsupportedAttachments.map(
+          attachment =>
+            `[Attachment: ${attachment.file.name}. ` +
+            'Its contents cannot be analyzed yet.]'
+        )
 
+      // STEP 5: Prepare the message content
       const combinedContent = [
-        question || 'Please review the attached content.',
+        question ||
+          (images.length > 0
+            ? 'Describe the attached image in detail.'
+            : 'Please review the attached content.'),
         ...extractedTexts,
         ...attachmentNotes,
       ].join('\n\n')
 
-      const apiMessages = [
+      // STEP 6: Select the appropriate model
+      const selectedModel =
+        images.length > 0
+          ? VISION_MODEL
+          : TEXT_MODEL
+
+      // STEP 7: Prepare Ollama conversation
+      const apiMessages: OllamaMessage[] = [
         ...messages.map(message => ({
           role: message.role,
-          content: message.content,
+          content: message.apiContent || message.content,
         })),
         {
           role: 'user',
           content: combinedContent,
+          ...(images.length > 0 ? { images } : {}),
         },
       ]
 
+      // STEP 8: Send the request to Ollama
       const response = await fetch('/api/chat', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          model: 'llama3.2:1b',
+          model: selectedModel,
           messages: apiMessages,
           stream: false,
         }),
       })
 
       if (!response.ok) {
-        throw new Error(`Ollama error: ${response.status}`)
+        const errorText = await response.text()
+
+        throw new Error(
+          `Ollama error ${response.status}: ${errorText}`
+        )
       }
 
       const data = await response.json()
 
+      const assistantReply =
+        data.message?.content ||
+        'No response received from Ollama.'
+
+      // STEP 9: Save the assistant response
       setMessages(previous => [
-        ...previous,
+        ...previous.map(message =>
+          message === userMessage
+            ? {
+                ...message,
+                apiContent: combinedContent,
+                model: selectedModel,
+              }
+            : message
+        ),
         {
           role: 'assistant',
-          content: data.message?.content || 'No response received.',
+          content: assistantReply,
+          model: selectedModel,
         },
       ])
     } catch (error) {
-      console.error(error)
+      console.error('LocalMind AI error:', error)
+
+      const errorMessage =
+        error instanceof Error
+          ? error.message
+          : 'Unknown error.'
 
       setMessages(previous => [
         ...previous,
         {
           role: 'assistant',
           content:
-            'Could not connect to Ollama. Please check that Ollama is running.',
+            'Something went wrong while contacting Ollama. ' +
+            'Please check that Ollama is running.',
         },
       ])
+
+      setMediaError(errorMessage)
     } finally {
       setLoading(false)
     }
   }
 
-  function renderAttachments(items: Attachment[]) {
+  function renderAttachments(
+    items: Attachment[],
+    removable = false
+  ) {
     return (
       <div className="attachments-preview">
         {items.map(attachment => (
-          <div className="attachment-card" key={attachment.id}>
+          <div
+            className="attachment-card"
+            key={attachment.id}
+          >
             {attachment.file.type.startsWith('image/') &&
               attachment.previewUrl && (
                 <img
@@ -371,12 +555,16 @@ function App() {
               {attachment.file.name}
             </span>
 
-            {items === attachments && (
+            {removable && (
               <button
                 type="button"
                 className="remove-attachment"
-                onClick={() => removeAttachment(attachment.id)}
-                aria-label={`Remove ${attachment.file.name}`}
+                onClick={() =>
+                  removeAttachment(attachment.id)
+                }
+                aria-label={
+                  `Remove ${attachment.file.name}`
+                }
               >
                 ✕
               </button>
@@ -391,7 +579,9 @@ function App() {
     <div className="app">
       <header>
         <h1>🤖 LocalMind AI</h1>
-        <p>Your personal AI assistant, running locally.</p>
+        <p>
+          Your personal AI assistant, running locally.
+        </p>
       </header>
 
       <main className="chat-container">
@@ -406,7 +596,9 @@ function App() {
 
               {message.attachments &&
                 message.attachments.length > 0 &&
-                renderAttachments(message.attachments)}
+                renderAttachments(
+                  message.attachments
+                )}
             </div>
           ))}
 
@@ -425,7 +617,10 @@ function App() {
         </div>
 
         {mediaError && (
-          <p className="media-error" role="alert">
+          <p
+            className="media-error"
+            role="alert"
+          >
             {mediaError}
           </p>
         )}
@@ -440,11 +635,17 @@ function App() {
             />
 
             <div className="camera-actions">
-              <button type="button" onClick={takePhoto}>
+              <button
+                type="button"
+                onClick={takePhoto}
+              >
                 📸 Take Photo
               </button>
 
-              <button type="button" onClick={closeCamera}>
+              <button
+                type="button"
+                onClick={closeCamera}
+              >
                 Cancel
               </button>
             </div>
@@ -458,7 +659,9 @@ function App() {
           multiple
           hidden
           onChange={event => {
-            addFiles(Array.from(event.target.files || []))
+            addFiles(
+              Array.from(event.target.files || [])
+            )
             event.target.value = ''
           }}
         />
@@ -470,14 +673,19 @@ function App() {
           multiple
           hidden
           onChange={event => {
-            addFiles(Array.from(event.target.files || []))
+            addFiles(
+              Array.from(event.target.files || [])
+            )
             event.target.value = ''
           }}
         />
 
         <div className="composer">
           {attachments.length > 0 &&
-            renderAttachments(attachments)}
+            renderAttachments(
+              attachments,
+              true
+            )}
 
           <form
             className="composer-form"
@@ -488,12 +696,17 @@ function App() {
           >
             <textarea
               value={input}
-              onChange={event => setInput(event.target.value)}
+              onChange={event =>
+                setInput(event.target.value)
+              }
               placeholder="Ask LocalMind anything..."
               rows={2}
               disabled={loading}
               onKeyDown={event => {
-                if (event.key === 'Enter' && !event.shiftKey) {
+                if (
+                  event.key === 'Enter' &&
+                  !event.shiftKey
+                ) {
                   event.preventDefault()
                   void sendMessage()
                 }
@@ -505,7 +718,9 @@ function App() {
                 <button
                   type="button"
                   className="plus-button"
-                  onClick={() => setMenuOpen(!menuOpen)}
+                  onClick={() =>
+                    setMenuOpen(!menuOpen)
+                  }
                   aria-label="Add attachment"
                   aria-expanded={menuOpen}
                 >
@@ -516,21 +731,27 @@ function App() {
                   <div className="attachment-menu">
                     <button
                       type="button"
-                      onClick={() => galleryRef.current?.click()}
+                      onClick={() =>
+                        galleryRef.current?.click()
+                      }
                     >
                       🖼️ Gallery
                     </button>
 
                     <button
                       type="button"
-                      onClick={() => void openCamera()}
+                      onClick={() =>
+                        void openCamera()
+                      }
                     >
                       📷 Camera
                     </button>
 
                     <button
                       type="button"
-                      onClick={() => filesRef.current?.click()}
+                      onClick={() =>
+                        filesRef.current?.click()
+                      }
                     >
                       📎 Files
                     </button>
@@ -541,7 +762,11 @@ function App() {
               <div className="composer-right">
                 <button
                   type="button"
-                  className={`mic-button ${recording ? 'recording' : ''}`}
+                  className={
+                    `mic-button ${
+                      recording ? 'recording' : ''
+                    }`
+                  }
                   onClick={() => {
                     if (recording) {
                       stopRecording()
@@ -549,8 +774,16 @@ function App() {
                       void startRecording()
                     }
                   }}
-                  title={recording ? 'Stop recording' : 'Record audio'}
-                  aria-label={recording ? 'Stop recording' : 'Record audio'}
+                  title={
+                    recording
+                      ? 'Stop recording'
+                      : 'Record audio'
+                  }
+                  aria-label={
+                    recording
+                      ? 'Stop recording'
+                      : 'Record audio'
+                  }
                 >
                   {recording ? '⏹️' : '🎤'}
                 </button>
@@ -560,7 +793,10 @@ function App() {
                   className="send-button"
                   disabled={
                     loading ||
-                    (!input.trim() && attachments.length === 0)
+                    (
+                      !input.trim() &&
+                      attachments.length === 0
+                    )
                   }
                   aria-label="Send message"
                 >
@@ -573,7 +809,8 @@ function App() {
 
         {recording && (
           <p className="recording-status">
-            🔴 Recording audio... Press stop when finished.
+            🔴 Recording audio...
+            Press stop when finished.
           </p>
         )}
       </main>
