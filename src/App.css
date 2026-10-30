@@ -1,0 +1,610 @@
+
+/* =========================================
+   LOCALMIND AI - MAIN DESIGN
+========================================= */
+
+:root {
+  font-family: Inter, -apple-system, BlinkMacSystemFont,
+    "Segoe UI", sans-serif;
+  color: #f4f5fa;
+  background: #0d1020;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  width: 100%;
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  background: #0d1020;
+}
+
+button,
+input,
+textarea {
+  font: inherit;
+}
+
+button {
+  cursor: pointer;
+}
+
+button:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+/* =========================================
+   APP LAYOUT
+========================================= */
+
+.app {
+  min-height: 100vh;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 32px 20px;
+  background:
+    radial-gradient(
+      ellipse at top,
+      rgba(55, 65, 125, 0.12),
+      transparent 55%
+    ),
+    #0d1020;
+}
+
+.app header {
+  text-align: center;
+  margin-bottom: 28px;
+}
+
+.app header h1 {
+  margin: 0;
+  font-size: 30px;
+  font-weight: 750;
+  letter-spacing: -0.7px;
+}
+
+.app header p {
+  color: #a4acc1;
+  font-size: 14px;
+  margin: 12px 0 0;
+}
+
+/* =========================================
+   CHAT CONTAINER
+========================================= */
+
+.chat-container {
+  width: 100%;
+  max-width: 760px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  flex: 1;
+  min-height: 0;
+}
+
+/* =========================================
+   CHAT MESSAGES
+========================================= */
+
+.messages {
+  flex: 1;
+  min-height: 300px;
+  max-height: calc(100vh - 310px);
+  overflow-y: auto;
+  padding: 24px;
+  border: 1px solid #2c3652;
+  border-radius: 22px;
+  background: #171f33;
+  display: flex;
+  flex-direction: column;
+  gap: 15px;
+  scrollbar-width: thin;
+  scrollbar-color: #465477 transparent;
+}
+
+.message {
+  max-width: 83%;
+  width: fit-content;
+  padding: 13px 17px;
+  border-radius: 17px;
+  line-height: 1.65;
+  font-size: 14px;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+  animation: messageAppear 0.2s ease-out;
+}
+
+.message.user {
+  align-self: flex-end;
+  background: #4054b7;
+  color: #ffffff;
+  border-bottom-right-radius: 5px;
+}
+
+.message.assistant {
+  align-self: flex-start;
+  background: #293651;
+  color: #e8edfa;
+  border-bottom-left-radius: 5px;
+}
+
+@keyframes messageAppear {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* =========================================
+   CHATGPT-STYLE COMPOSER
+========================================= */
+
+.composer {
+  width: 100%;
+  background: #242b3a;
+  border: 1px solid #414a60;
+  border-radius: 25px;
+  padding: 13px 16px;
+  position: relative;
+  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.15);
+}
+
+.composer:focus-within {
+  border-color: #6475b6;
+}
+
+.composer-form {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.composer-form textarea {
+  width: 100%;
+  min-height: 55px;
+  max-height: 180px;
+  resize: vertical;
+  border: none;
+  outline: none;
+  background: transparent;
+  color: #f5f6fb;
+  font-size: 15px;
+  line-height: 1.5;
+  padding: 8px 5px;
+}
+
+.composer-form textarea::placeholder {
+  color: #a1a8b9;
+}
+
+.composer-toolbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+}
+
+.composer-left,
+.composer-right {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.composer-left {
+  position: relative;
+}
+
+/* =========================================
+   PLUS BUTTON
+========================================= */
+
+.plus-button {
+  width: 42px;
+  height: 42px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  border-radius: 50%;
+  background: #414a5c;
+  color: #ffffff;
+  font-size: 29px;
+  font-weight: 300;
+  transition: background 0.2s, transform 0.2s;
+}
+
+.plus-button:hover {
+  background: #56627a;
+  transform: rotate(90deg);
+}
+
+/* =========================================
+   ATTACHMENT MENU
+========================================= */
+
+.attachment-menu {
+  position: absolute;
+  bottom: calc(100% + 15px);
+  left: 0;
+  width: 250px;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: 10px;
+  background: #303746;
+  border: 1px solid #4c566c;
+  border-radius: 19px;
+  box-shadow: 0 16px 35px rgba(0, 0, 0, 0.4);
+  z-index: 100;
+  animation: menuAppear 0.18s ease-out;
+}
+
+.attachment-menu button {
+  width: 100%;
+  padding: 14px 16px;
+  background: transparent;
+  border: none;
+  border-radius: 12px;
+  color: #f2f4fa;
+  text-align: left;
+  font-size: 15px;
+  transition: background 0.2s;
+}
+
+.attachment-menu button:hover {
+  background: #454e62;
+}
+
+@keyframes menuAppear {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* =========================================
+   MICROPHONE BUTTON
+========================================= */
+
+.mic-button {
+  width: 42px;
+  height: 42px;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  color: #f4f5fa;
+  font-size: 22px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.2s;
+}
+
+.mic-button:hover {
+  background: #414a5c;
+}
+
+.mic-button.recording {
+  background: #a72d46;
+  animation: recordingPulse 1.4s infinite;
+}
+
+@keyframes recordingPulse {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 rgba(235, 70, 90, 0.45);
+  }
+
+  50% {
+    box-shadow: 0 0 0 9px rgba(235, 70, 90, 0);
+  }
+}
+
+/* =========================================
+   SEND BUTTON
+========================================= */
+
+.send-button {
+  width: 43px;
+  height: 43px;
+  border: none;
+  border-radius: 50%;
+  background: #5269db;
+  color: white;
+  font-size: 27px;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.2s, transform 0.2s;
+}
+
+.send-button:not(:disabled):hover {
+  background: #7185ef;
+  transform: translateY(-2px);
+}
+
+.send-button:disabled {
+  background: #424b65;
+  color: #8993ac;
+}
+
+/* =========================================
+   ATTACHMENT PREVIEWS
+========================================= */
+
+.attachments-preview {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.attachment-card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  position: relative;
+  max-width: 230px;
+  min-width: 100px;
+  padding: 10px;
+  background: #344057;
+  border: 1px solid #4b5872;
+  border-radius: 14px;
+}
+
+.attachment-card img {
+  width: 100%;
+  max-height: 130px;
+  object-fit: cover;
+  border-radius: 9px;
+}
+
+.attachment-card audio {
+  width: 200px;
+  max-width: 100%;
+  height: 40px;
+}
+
+.attachment-name {
+  font-size: 12px;
+  color: #e2e7f5;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.remove-attachment {
+  position: absolute;
+  top: -8px;
+  right: -8px;
+  width: 25px;
+  height: 25px;
+  background: #a72d46;
+  color: white;
+  border: 2px solid #242b3a;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+}
+
+.remove-attachment:hover {
+  background: #d63f5c;
+}
+
+/* =========================================
+   CAMERA PREVIEW
+========================================= */
+
+.camera-panel {
+  width: 100%;
+  background: #1b2438;
+  border: 1px solid #394764;
+  border-radius: 18px;
+  padding: 15px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.camera-panel video {
+  width: 100%;
+  max-height: 350px;
+  object-fit: contain;
+  background: #000;
+  border-radius: 12px;
+}
+
+.camera-actions {
+  display: flex;
+  justify-content: center;
+  gap: 12px;
+}
+
+.camera-actions button {
+  border: none;
+  border-radius: 12px;
+  padding: 11px 18px;
+  background: #455bc1;
+  color: #ffffff;
+  font-size: 14px;
+}
+
+.camera-actions button:hover {
+  background: #6176db;
+}
+
+.camera-actions button:last-child {
+  background: #414b60;
+}
+
+/* =========================================
+   RECORDING STATUS AND ERRORS
+========================================= */
+
+.recording-status {
+  margin: 0;
+  padding: 10px 14px;
+  color: #ff9aa9;
+  background: rgba(180, 40, 65, 0.12);
+  border-radius: 12px;
+  font-size: 13px;
+  text-align: center;
+}
+
+.media-error {
+  margin: 0;
+  padding: 10px 14px;
+  color: #ffb5b5;
+  background: #44252e;
+  border: 1px solid #8c4050;
+  border-radius: 12px;
+  font-size: 13px;
+}
+
+/* =========================================
+   TYPING ANIMATION
+========================================= */
+
+.typing-dots {
+  display: inline-flex;
+  gap: 3px;
+  margin-left: 4px;
+}
+
+.typing-dots span {
+  animation: typing 1.4s infinite;
+  font-size: 20px;
+  line-height: 10px;
+}
+
+.typing-dots span:nth-child(2) {
+  animation-delay: 0.2s;
+}
+
+.typing-dots span:nth-child(3) {
+  animation-delay: 0.4s;
+}
+
+@keyframes typing {
+  0%,
+  60%,
+  100% {
+    opacity: 0.2;
+    transform: translateY(0);
+  }
+
+  30% {
+    opacity: 1;
+    transform: translateY(-4px);
+  }
+}
+
+/* =========================================
+   MOBILE RESPONSIVE DESIGN
+========================================= */
+
+@media (max-width: 600px) {
+  .app {
+    padding: 18px 12px;
+  }
+
+  .app header {
+    margin-bottom: 20px;
+  }
+
+  .app header h1 {
+    font-size: 25px;
+  }
+
+  .app header p {
+    font-size: 12px;
+  }
+
+  .chat-container {
+    gap: 10px;
+  }
+
+  .messages {
+    min-height: 250px;
+    max-height: calc(100dvh - 290px);
+    padding: 14px;
+    border-radius: 16px;
+  }
+
+  .message {
+    max-width: 92%;
+    font-size: 13px;
+    padding: 11px 13px;
+  }
+
+  .composer {
+    padding: 11px 12px;
+    border-radius: 20px;
+  }
+
+  .composer-form textarea {
+    font-size: 14px;
+  }
+
+  .attachment-menu {
+    width: 220px;
+  }
+
+  .plus-button,
+  .mic-button,
+  .send-button {
+    width: 40px;
+    height: 40px;
+  }
+
+  .attachment-card {
+    max-width: 160px;
+  }
+}
+
+/* =========================================
+   ACCESSIBILITY
+========================================= */
+
+button:focus-visible,
+textarea:focus-visible {
+  outline: 2px solid #8fa2ff;
+  outline-offset: 3px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}
