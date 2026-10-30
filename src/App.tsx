@@ -1,5 +1,7 @@
 
 import { useEffect, useRef, useState } from 'react'
+import ReactMarkdown from 'react-markdown'
+import remarkGfm from 'remark-gfm'
 import './App.css'
 
 type Attachment = {
@@ -13,7 +15,8 @@ type Message = {
   content: string
   attachments?: Attachment[]
   apiContent?: string
-  model?: string
+  apiImages?: string[]
+  isError?: boolean
 }
 
 type OllamaMessage = {
@@ -22,11 +25,21 @@ type OllamaMessage = {
   images?: string[]
 }
 
+type OllamaChunk = {
+  message?: {
+    role?: string
+    content?: string
+  }
+  done?: boolean
+  error?: string
+}
+
 const TEXT_MODEL = 'llama3.2:1b'
 const VISION_MODEL = 'gemma3:4b'
 
 const MAX_IMAGE_SIZE = 10 * 1024 * 1024
 const MAX_TEXT_SIZE = 100_000
+const MAX_RECENT_MESSAGES = 8
 
 function imageToBase64(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -58,6 +71,60 @@ function imageToBase64(file: File): Promise<string> {
   })
 }
 
+function buildHistory(
+  messages: Message[],
+  newImagesPresent: boolean
+): {
+  history: OllamaMessage[]
+  useVision: boolean
+} {
+  const validMessages = messages.filter(
+    message => !message.isError
+  )
+
+  const lastImageIndex = validMessages.findLastIndex(
+    message => (message.apiImages?.length ?? 0) > 0
+  )
+
+  const recentStart = Math.max(
+    0,
+    validMessages.length - MAX_RECENT_MESSAGES
+  )
+
+  const recentMessages = validMessages.slice(recentStart)
+
+  const history: OllamaMessage[] = recentMessages.map(
+    message => ({
+      role: message.role,
+      content: message.apiContent ?? message.content,
+    })
+  )
+
+  // Preserve the most recent image for follow-up questions.
+  if (!newImagesPresent && lastImageIndex >= 0) {
+    const imageMessage = validMessages[lastImageIndex]
+
+    const imageHistoryMessage: OllamaMessage = {
+      role: imageMessage.role,
+      content:
+        imageMessage.apiContent ?? imageMessage.content,
+      images: imageMessage.apiImages,
+    }
+
+    if (lastImageIndex < recentStart) {
+      history.unshift(imageHistoryMessage)
+    } else {
+      const relativeIndex = lastImageIndex - recentStart
+      history[relativeIndex] = imageHistoryMessage
+    }
+  }
+
+  return {
+    history,
+    useVision: newImagesPresent || lastImageIndex >= 0,
+  }
+}
+
 function App() {
   const [input, setInput] = useState('')
   const [messages, setMessages] = useState<Message[]>([])
@@ -71,15 +138,14 @@ function App() {
   const galleryRef = useRef<HTMLInputElement>(null)
   const filesRef = useRef<HTMLInputElement>(null)
   const videoRef = useRef<HTMLVideoElement>(null)
-
   const recorderRef = useRef<MediaRecorder | null>(null)
   const audioChunksRef = useRef<Blob[]>([])
   const audioStreamRef = useRef<MediaStream | null>(null)
   const cameraStreamRef = useRef<MediaStream | null>(null)
-
   const attachmentsRef = useRef<Attachment[]>([])
   const messagesRef = useRef<Message[]>([])
   const chatEndRef = useRef<HTMLDivElement>(null)
+  const sendingRef = useRef(false)
 
   useEffect(() => {
     attachmentsRef.current = attachments
@@ -100,7 +166,6 @@ function App() {
       cameraStreamRef.current
     ) {
       videoRef.current.srcObject = cameraStreamRef.current
-
       void videoRef.current.play().catch(console.error)
     }
   }, [cameraOpen])
@@ -132,30 +197,31 @@ function App() {
 
   function addFiles(files: File[]) {
     const validFiles: File[] = []
+    const rejected: string[] = []
 
     for (const file of files) {
       if (
         file.type.startsWith('image/') &&
         file.size > MAX_IMAGE_SIZE
       ) {
-        setMediaError(
-          `${file.name} is too large. Maximum image size is 10 MB.`
-        )
+        rejected.push(file.name)
         continue
       }
 
       validFiles.push(file)
     }
 
-    const newAttachments: Attachment[] = validFiles.map(file => ({
-      id: crypto.randomUUID(),
-      file,
-      previewUrl:
-        file.type.startsWith('image/') ||
-        file.type.startsWith('audio/')
-          ? URL.createObjectURL(file)
-          : undefined,
-    }))
+    const newAttachments: Attachment[] = validFiles.map(
+      file => ({
+        id: crypto.randomUUID(),
+        file,
+        previewUrl:
+          file.type.startsWith('image/') ||
+          file.type.startsWith('audio/')
+            ? URL.createObjectURL(file)
+            : undefined,
+      })
+    )
 
     setAttachments(previous => [
       ...previous,
@@ -164,14 +230,18 @@ function App() {
 
     setMenuOpen(false)
 
-    if (validFiles.length === files.length) {
-      setMediaError('')
-    }
+    setMediaError(
+      rejected.length
+        ? `Images must be 10 MB or smaller: ${rejected.join(', ')}`
+        : ''
+    )
   }
 
   function removeAttachment(id: string) {
     setAttachments(previous => {
-      const selected = previous.find(item => item.id === id)
+      const selected = previous.find(
+        item => item.id === id
+      )
 
       if (selected?.previewUrl) {
         URL.revokeObjectURL(selected.previewUrl)
@@ -190,9 +260,7 @@ function App() {
       }
 
       if (typeof MediaRecorder === 'undefined') {
-        throw new Error(
-          'Audio recording is not supported by this browser.'
-        )
+        throw new Error('Audio recording is not supported.')
       }
 
       const stream =
@@ -236,7 +304,6 @@ function App() {
         }
 
         stream.getTracks().forEach(track => track.stop())
-
         audioStreamRef.current = null
         recorderRef.current = null
       }
@@ -317,12 +384,10 @@ function App() {
     if (!video || !video.videoWidth) return
 
     const canvas = document.createElement('canvas')
-
     canvas.width = video.videoWidth
     canvas.height = video.videoHeight
 
     const context = canvas.getContext('2d')
-
     if (!context) return
 
     context.drawImage(video, 0, 0)
@@ -350,12 +415,15 @@ function App() {
 
     if (
       (!question && attachments.length === 0) ||
-      loading
+      sendingRef.current
     ) {
       return
     }
 
+    sendingRef.current = true
+
     const selectedAttachments = [...attachments]
+    const conversationHistory = [...messagesRef.current]
 
     const userMessage: Message = {
       role: 'user',
@@ -363,32 +431,28 @@ function App() {
       attachments: selectedAttachments,
     }
 
-    setMessages(previous => [
-      ...previous,
-      userMessage,
-    ])
-
+    setMessages(previous => [...previous, userMessage])
     setInput('')
     setAttachments([])
     setMenuOpen(false)
     setMediaError('')
     setLoading(true)
 
+    let assistantStarted = false
+    let fullReply = ''
+
     try {
-      // STEP 1: Find attached images
       const imageAttachments = selectedAttachments.filter(
         attachment =>
           attachment.file.type.startsWith('image/')
       )
 
-      // STEP 2: Convert images to Base64
-      const images = await Promise.all(
+      const newImages = await Promise.all(
         imageAttachments.map(attachment =>
           imageToBase64(attachment.file)
         )
       )
 
-      // STEP 3: Read supported text documents
       const textAttachments = selectedAttachments.filter(
         attachment =>
           /\.(txt|md)$/i.test(attachment.file.name)
@@ -405,14 +469,11 @@ function App() {
 
           const text = await attachment.file.text()
 
-          return (
-            `File: ${attachment.file.name}\n` +
-            text
-          )
+          return `File: ${attachment.file.name}\n${text}`
         })
       )
 
-      // STEP 4: Identify unsupported attachments
+      // PDF, Word and audio processing will be added later.
       const unsupportedAttachments =
         selectedAttachments.filter(
           attachment =>
@@ -420,43 +481,41 @@ function App() {
             !/\.(txt|md)$/i.test(attachment.file.name)
         )
 
-      const attachmentNotes =
-        unsupportedAttachments.map(
-          attachment =>
-            `[Attachment: ${attachment.file.name}. ` +
-            'Its contents cannot be analyzed yet.]'
-        )
+      const attachmentNotes = unsupportedAttachments.map(
+        attachment =>
+          `[Attachment: ${attachment.file.name}. ` +
+          'Its contents cannot be analyzed yet.]'
+      )
 
-      // STEP 5: Prepare the message content
       const combinedContent = [
         question ||
-          (images.length > 0
+          (newImages.length > 0
             ? 'Describe the attached image in detail.'
             : 'Please review the attached content.'),
         ...extractedTexts,
         ...attachmentNotes,
       ].join('\n\n')
 
-      // STEP 6: Select the appropriate model
-      const selectedModel =
-        images.length > 0
-          ? VISION_MODEL
-          : TEXT_MODEL
+      const { history, useVision } = buildHistory(
+        conversationHistory,
+        newImages.length > 0
+      )
 
-      // STEP 7: Prepare Ollama conversation
+      const selectedModel = useVision
+        ? VISION_MODEL
+        : TEXT_MODEL
+
       const apiMessages: OllamaMessage[] = [
-        ...messages.map(message => ({
-          role: message.role,
-          content: message.apiContent || message.content,
-        })),
+        ...history,
         {
           role: 'user',
           content: combinedContent,
-          ...(images.length > 0 ? { images } : {}),
+          ...(newImages.length > 0
+            ? { images: newImages }
+            : {}),
         },
       ]
 
-      // STEP 8: Send the request to Ollama
       const response = await fetch('/api/chat', {
         method: 'POST',
         headers: {
@@ -465,7 +524,11 @@ function App() {
         body: JSON.stringify({
           model: selectedModel,
           messages: apiMessages,
-          stream: false,
+          stream: true,
+          keep_alive: '10m',
+          options: {
+            num_predict: 512,
+          },
         }),
       })
 
@@ -477,29 +540,111 @@ function App() {
         )
       }
 
-      const data = await response.json()
+      if (!response.body) {
+        throw new Error('Streaming is not available.')
+      }
 
-      const assistantReply =
-        data.message?.content ||
-        'No response received from Ollama.'
-
-      // STEP 9: Save the assistant response
-      setMessages(previous => [
-        ...previous.map(message =>
+      setMessages(previous =>
+        previous.map(message =>
           message === userMessage
             ? {
                 ...message,
                 apiContent: combinedContent,
-                model: selectedModel,
+                apiImages: newImages,
               }
             : message
-        ),
-        {
-          role: 'assistant',
-          content: assistantReply,
-          model: selectedModel,
-        },
-      ])
+        )
+      )
+
+      const reader = response.body.getReader()
+      const decoder = new TextDecoder()
+
+      let buffer = ''
+      let streamFinished = false
+
+      function processLine(line: string) {
+        if (!line.trim()) return
+
+        const chunk = JSON.parse(line) as OllamaChunk
+
+        if (chunk.error) {
+          throw new Error(chunk.error)
+        }
+
+        if (chunk.message?.content) {
+          fullReply += chunk.message.content
+
+          if (!assistantStarted) {
+            assistantStarted = true
+
+            setMessages(previous => [
+              ...previous,
+              {
+                role: 'assistant',
+                content: fullReply,
+              },
+            ])
+          } else {
+            setMessages(previous => {
+              const updated = [...previous]
+              const lastIndex = updated.length - 1
+
+              if (
+                lastIndex >= 0 &&
+                updated[lastIndex].role === 'assistant'
+              ) {
+                updated[lastIndex] = {
+                  ...updated[lastIndex],
+                  content: fullReply,
+                }
+              }
+
+              return updated
+            })
+          }
+        }
+
+        if (chunk.done) {
+          streamFinished = true
+        }
+      }
+
+      while (true) {
+        const { value, done } = await reader.read()
+
+        if (done) break
+
+        buffer += decoder.decode(value, {
+          stream: true,
+        })
+
+        const lines = buffer.split('\n')
+        buffer = lines.pop() ?? ''
+
+        for (const line of lines) {
+          processLine(line)
+        }
+      }
+
+      buffer += decoder.decode()
+
+      if (buffer.trim()) {
+        processLine(buffer)
+      }
+
+      if (!streamFinished) {
+        throw new Error('The response stream ended early.')
+      }
+
+      if (!assistantStarted) {
+        setMessages(previous => [
+          ...previous,
+          {
+            role: 'assistant',
+            content: 'No response received from Ollama.',
+          },
+        ])
+      }
     } catch (error) {
       console.error('LocalMind AI error:', error)
 
@@ -508,18 +653,42 @@ function App() {
           ? error.message
           : 'Unknown error.'
 
-      setMessages(previous => [
-        ...previous,
-        {
-          role: 'assistant',
-          content:
-            'Something went wrong while contacting Ollama. ' +
-            'Please check that Ollama is running.',
-        },
-      ])
-
       setMediaError(errorMessage)
+
+      if (assistantStarted) {
+        setMessages(previous => {
+          const updated = [...previous]
+          const lastIndex = updated.length - 1
+
+          if (
+            lastIndex >= 0 &&
+            updated[lastIndex].role === 'assistant'
+          ) {
+            updated[lastIndex] = {
+              ...updated[lastIndex],
+              content:
+                fullReply +
+                '\n\n[Response interrupted. Please try again.]',
+              isError: true,
+            }
+          }
+
+          return updated
+        })
+      } else {
+        setMessages(previous => [
+          ...previous,
+          {
+            role: 'assistant',
+            content:
+              'Something went wrong while contacting Ollama. ' +
+              'Please check that Ollama is running.',
+            isError: true,
+          },
+        ])
+      }
     } finally {
+      sendingRef.current = false
       setLoading(false)
     }
   }
@@ -562,9 +731,7 @@ function App() {
                 onClick={() =>
                   removeAttachment(attachment.id)
                 }
-                aria-label={
-                  `Remove ${attachment.file.name}`
-                }
+                aria-label={`Remove ${attachment.file.name}`}
               >
                 ✕
               </button>
@@ -591,14 +758,23 @@ function App() {
               key={index}
               className={`message ${message.role}`}
             >
-              {message.role === 'user' ? '👤' : '🤖'}{' '}
-              {message.content}
+              <div className="message-content">
+                <span className="message-icon">
+                  {message.role === 'user' ? '👤' : '🤖'}
+                </span>
+
+                <div className="markdown-content">
+                  <ReactMarkdown
+                    remarkPlugins={[remarkGfm]}
+                  >
+                    {message.content}
+                  </ReactMarkdown>
+                </div>
+              </div>
 
               {message.attachments &&
                 message.attachments.length > 0 &&
-                renderAttachments(
-                  message.attachments
-                )}
+                renderAttachments(message.attachments)}
             </div>
           ))}
 
@@ -617,10 +793,7 @@ function App() {
         </div>
 
         {mediaError && (
-          <p
-            className="media-error"
-            role="alert"
-          >
+          <p className="media-error" role="alert">
             {mediaError}
           </p>
         )}
@@ -682,10 +855,7 @@ function App() {
 
         <div className="composer">
           {attachments.length > 0 &&
-            renderAttachments(
-              attachments,
-              true
-            )}
+            renderAttachments(attachments, true)}
 
           <form
             className="composer-form"
@@ -705,7 +875,8 @@ function App() {
               onKeyDown={event => {
                 if (
                   event.key === 'Enter' &&
-                  !event.shiftKey
+                  !event.shiftKey &&
+                  !event.nativeEvent.isComposing
                 ) {
                   event.preventDefault()
                   void sendMessage()
@@ -762,11 +933,9 @@ function App() {
               <div className="composer-right">
                 <button
                   type="button"
-                  className={
-                    `mic-button ${
-                      recording ? 'recording' : ''
-                    }`
-                  }
+                  className={`mic-button ${
+                    recording ? 'recording' : ''
+                  }`}
                   onClick={() => {
                     if (recording) {
                       stopRecording()
@@ -793,10 +962,8 @@ function App() {
                   className="send-button"
                   disabled={
                     loading ||
-                    (
-                      !input.trim() &&
-                      attachments.length === 0
-                    )
+                    (!input.trim() &&
+                      attachments.length === 0)
                   }
                   aria-label="Send message"
                 >

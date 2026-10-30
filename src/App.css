@@ -608,3 +608,131 @@ textarea:focus-visible {
     transition-duration: 0.01ms !important;
   }
 }
+
+/* =========================================
+   LOCALMIND AI - MARKDOWN RESPONSES
+========================================= */
+
+.message-content {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.message-icon {
+  flex-shrink: 0;
+}
+
+.markdown-content {
+  min-width: 0;
+  flex: 1;
+  line-height: 1.7;
+  white-space: normal;
+}
+
+.markdown-content p {
+  margin: 0 0 12px;
+}
+
+.markdown-content p:last-child {
+  margin-bottom: 0;
+}
+
+.markdown-content h1,
+.markdown-content h2,
+.markdown-content h3 {
+  margin: 18px 0 10px;
+  line-height: 1.35;
+  font-weight: 700;
+}
+
+.markdown-content h1 {
+  font-size: 22px;
+}
+
+.markdown-content h2 {
+  font-size: 19px;
+}
+
+.markdown-content h3 {
+  font-size: 16px;
+}
+
+.markdown-content ul,
+.markdown-content ol {
+  padding-left: 24px;
+  margin: 10px 0;
+}
+
+.markdown-content li {
+  margin-bottom: 6px;
+}
+
+.markdown-content strong {
+  font-weight: 700;
+  color: #ffffff;
+}
+
+.markdown-content pre {
+  background: #101827;
+  padding: 15px;
+  border-radius: 12px;
+  overflow-x: auto;
+  white-space: pre;
+  margin: 12px 0;
+}
+
+.markdown-content code {
+  background: #101827;
+  padding: 2px 5px;
+  border-radius: 5px;
+  font-family: monospace;
+  font-size: 13px;
+}
+
+.markdown-content pre code {
+  background: transparent;
+  padding: 0;
+}
+
+.markdown-content a {
+  color: #9bb4ff;
+  text-decoration: underline;
+}
+
+.markdown-content table {
+  display: block;
+  max-width: 100%;
+  overflow-x: auto;
+  border-collapse: collapse;
+  margin: 14px 0;
+}
+
+.markdown-content th,
+.markdown-content td {
+  border: 1px solid #53617d;
+  padding: 9px 12px;
+  text-align: left;
+}
+
+.markdown-content th {
+  background: #344461;
+}
+
+.markdown-content blockquote {
+  margin: 12px 0;
+  padding: 8px 14px;
+  border-left: 3px solid #8fa2ff;
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.markdown-content img {
+  max-width: 100%;
+  border-radius: 10px;
+}
+
+.markdown-content hr {
+  border: none;
+  border-top: 1px solid #53617d;
+  margin: 18px 0;
+}
