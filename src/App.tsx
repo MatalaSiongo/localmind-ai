@@ -2,7 +2,12 @@
 import { useEffect, useRef, useState } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
+import * as pdfjsLib from 'pdfjs-dist'
+import pdfWorkerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url'
+import mammoth from 'mammoth'
 import './App.css'
+
+pdfjsLib.GlobalWorkerOptions.workerSrc = pdfWorkerUrl
 
 type Attachment = {
   id: string
@@ -27,7 +32,6 @@ type OllamaMessage = {
 
 type OllamaChunk = {
   message?: {
-    role?: string
     content?: string
   }
   done?: boolean
@@ -38,7 +42,8 @@ const TEXT_MODEL = 'llama3.2:1b'
 const VISION_MODEL = 'gemma3:4b'
 
 const MAX_IMAGE_SIZE = 10 * 1024 * 1024
-const MAX_TEXT_SIZE = 100_000
+const MAX_DOCUMENT_SIZE = 5 * 1024 * 1024
+const MAX_DOCUMENT_CHARS = 12000
 const MAX_RECENT_MESSAGES = 8
 
 function imageToBase64(file: File): Promise<string> {
@@ -46,14 +51,12 @@ function imageToBase64(file: File): Promise<string> {
     const reader = new FileReader()
 
     reader.onload = () => {
-      const result = reader.result
-
-      if (typeof result !== 'string') {
+      if (typeof reader.result !== 'string') {
         reject(new Error('Could not read the image.'))
         return
       }
 
-      const base64 = result.split(',')[1]
+      const base64 = reader.result.split(',')[1]
 
       if (!base64) {
         reject(new Error('Image conversion failed.'))
@@ -69,6 +72,104 @@ function imageToBase64(file: File): Promise<string> {
 
     reader.readAsDataURL(file)
   })
+}
+
+function limitDocumentText(text: string): string {
+  if (text.length <= MAX_DOCUMENT_CHARS) {
+    return text
+  }
+
+  return (
+    text.slice(0, MAX_DOCUMENT_CHARS) +
+    '\n\n[Document truncated because it exceeds the reading limit.]'
+  )
+}
+
+async function extractPdfText(file: File): Promise<string> {
+  const data = new Uint8Array(await file.arrayBuffer())
+
+  const task = pdfjsLib.getDocument({ data })
+  const pdf = await task.promise
+
+  const pages: string[] = []
+  let totalCharacters = 0
+
+  try {
+    for (let pageNumber = 1; pageNumber <= pdf.numPages; pageNumber++) {
+      if (totalCharacters >= MAX_DOCUMENT_CHARS) break
+
+      const page = await pdf.getPage(pageNumber)
+      const textContent = await page.getTextContent()
+
+      const pageText = textContent.items
+        .map(item => ('str' in item ? item.str : ''))
+        .join(' ')
+
+      const remaining = MAX_DOCUMENT_CHARS - totalCharacters
+      const selectedText = pageText.slice(0, remaining)
+
+      pages.push(`Page ${pageNumber}:\n${selectedText}`)
+      totalCharacters += selectedText.length
+
+      page.cleanup()
+    }
+  } finally {
+    await task.destroy()
+  }
+
+  const result = pages.join('\n\n').trim()
+
+  if (!result) {
+    throw new Error(
+      `${file.name}: No readable text found. This may be a scanned PDF requiring OCR.`
+    )
+  }
+
+  return limitDocumentText(result)
+}
+
+async function extractWordText(file: File): Promise<string> {
+  const arrayBuffer = await file.arrayBuffer()
+
+  const result = await mammoth.extractRawText({
+    arrayBuffer,
+  })
+
+  const text = result.value.trim()
+
+  if (!text) {
+    throw new Error(
+      `${file.name}: No readable text found in the Word document.`
+    )
+  }
+
+  return limitDocumentText(text)
+}
+
+async function extractAttachmentText(file: File): Promise<string> {
+  if (file.size > MAX_DOCUMENT_SIZE) {
+    throw new Error(
+      `${file.name} is too large. Maximum document size is 5 MB.`
+    )
+  }
+
+  const extension = file.name.split('.').pop()?.toLowerCase()
+
+  let text = ''
+
+  if (extension === 'pdf') {
+    text = await extractPdfText(file)
+  } else if (extension === 'docx') {
+    text = await extractWordText(file)
+  } else if (extension === 'txt' || extension === 'md') {
+    text = limitDocumentText(await file.text())
+  } else {
+    throw new Error(
+      `${file.name}: Unsupported document format. Use PDF, DOCX, TXT or MD.`
+    )
+  }
+
+  return `Document: ${file.name}\n\n${text}`
 }
 
 function buildHistory(
@@ -91,31 +192,26 @@ function buildHistory(
     validMessages.length - MAX_RECENT_MESSAGES
   )
 
-  const recentMessages = validMessages.slice(recentStart)
-
-  const history: OllamaMessage[] = recentMessages.map(
-    message => ({
+  const history: OllamaMessage[] = validMessages
+    .slice(recentStart)
+    .map(message => ({
       role: message.role,
       content: message.apiContent ?? message.content,
-    })
-  )
+    }))
 
-  // Preserve the most recent image for follow-up questions.
   if (!newImagesPresent && lastImageIndex >= 0) {
     const imageMessage = validMessages[lastImageIndex]
 
     const imageHistoryMessage: OllamaMessage = {
       role: imageMessage.role,
-      content:
-        imageMessage.apiContent ?? imageMessage.content,
+      content: imageMessage.apiContent ?? imageMessage.content,
       images: imageMessage.apiImages,
     }
 
     if (lastImageIndex < recentStart) {
       history.unshift(imageHistoryMessage)
     } else {
-      const relativeIndex = lastImageIndex - recentStart
-      history[relativeIndex] = imageHistoryMessage
+      history[lastImageIndex - recentStart] = imageHistoryMessage
     }
   }
 
@@ -160,11 +256,7 @@ function App() {
   }, [messages, loading])
 
   useEffect(() => {
-    if (
-      cameraOpen &&
-      videoRef.current &&
-      cameraStreamRef.current
-    ) {
+    if (cameraOpen && videoRef.current && cameraStreamRef.current) {
       videoRef.current.srcObject = cameraStreamRef.current
       void videoRef.current.play().catch(console.error)
     }
@@ -172,13 +264,8 @@ function App() {
 
   useEffect(() => {
     return () => {
-      audioStreamRef.current
-        ?.getTracks()
-        .forEach(track => track.stop())
-
-      cameraStreamRef.current
-        ?.getTracks()
-        .forEach(track => track.stop())
+      audioStreamRef.current?.getTracks().forEach(track => track.stop())
+      cameraStreamRef.current?.getTracks().forEach(track => track.stop())
 
       const allAttachments = [
         ...attachmentsRef.current,
@@ -204,44 +291,40 @@ function App() {
         file.type.startsWith('image/') &&
         file.size > MAX_IMAGE_SIZE
       ) {
-        rejected.push(file.name)
+        rejected.push(`${file.name}: image exceeds 10 MB`)
+        continue
+      }
+
+      if (
+        !file.type.startsWith('image/') &&
+        !file.type.startsWith('audio/') &&
+        file.size > MAX_DOCUMENT_SIZE
+      ) {
+        rejected.push(`${file.name}: document exceeds 5 MB`)
         continue
       }
 
       validFiles.push(file)
     }
 
-    const newAttachments: Attachment[] = validFiles.map(
-      file => ({
-        id: crypto.randomUUID(),
-        file,
-        previewUrl:
-          file.type.startsWith('image/') ||
-          file.type.startsWith('audio/')
-            ? URL.createObjectURL(file)
-            : undefined,
-      })
-    )
+    const newAttachments: Attachment[] = validFiles.map(file => ({
+      id: crypto.randomUUID(),
+      file,
+      previewUrl:
+        file.type.startsWith('image/') ||
+        file.type.startsWith('audio/')
+          ? URL.createObjectURL(file)
+          : undefined,
+    }))
 
-    setAttachments(previous => [
-      ...previous,
-      ...newAttachments,
-    ])
-
+    setAttachments(previous => [...previous, ...newAttachments])
     setMenuOpen(false)
-
-    setMediaError(
-      rejected.length
-        ? `Images must be 10 MB or smaller: ${rejected.join(', ')}`
-        : ''
-    )
+    setMediaError(rejected.join('\n'))
   }
 
   function removeAttachment(id: string) {
     setAttachments(previous => {
-      const selected = previous.find(
-        item => item.id === id
-      )
+      const selected = previous.find(item => item.id === id)
 
       if (selected?.previewUrl) {
         URL.revokeObjectURL(selected.previewUrl)
@@ -263,10 +346,9 @@ function App() {
         throw new Error('Audio recording is not supported.')
       }
 
-      const stream =
-        await navigator.mediaDevices.getUserMedia({
-          audio: true,
-        })
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: true,
+      })
 
       audioStreamRef.current = stream
       audioChunksRef.current = []
@@ -281,13 +363,10 @@ function App() {
       }
 
       recorder.onstop = () => {
-        const mimeType =
-          recorder.mimeType || 'audio/webm'
-
-        const blob = new Blob(
-          audioChunksRef.current,
-          { type: mimeType }
-        )
+        const mimeType = recorder.mimeType || 'audio/webm'
+        const blob = new Blob(audioChunksRef.current, {
+          type: mimeType,
+        })
 
         if (blob.size > 0) {
           const extension = mimeType.includes('mp4')
@@ -319,10 +398,7 @@ function App() {
           : 'Could not access microphone.'
       )
 
-      audioStreamRef.current
-        ?.getTracks()
-        .forEach(track => track.stop())
-
+      audioStreamRef.current?.getTracks().forEach(track => track.stop())
       audioStreamRef.current = null
       setRecording(false)
     }
@@ -346,10 +422,9 @@ function App() {
         throw new Error('Camera access is unavailable.')
       }
 
-      const stream =
-        await navigator.mediaDevices.getUserMedia({
-          video: true,
-        })
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: true,
+      })
 
       cameraStreamRef.current = stream
       setCameraOpen(true)
@@ -365,10 +440,7 @@ function App() {
   }
 
   function closeCamera() {
-    cameraStreamRef.current
-      ?.getTracks()
-      .forEach(track => track.stop())
-
+    cameraStreamRef.current?.getTracks().forEach(track => track.stop())
     cameraStreamRef.current = null
 
     if (videoRef.current) {
@@ -443,8 +515,7 @@ function App() {
 
     try {
       const imageAttachments = selectedAttachments.filter(
-        attachment =>
-          attachment.file.type.startsWith('image/')
+        attachment => attachment.file.type.startsWith('image/')
       )
 
       const newImages = await Promise.all(
@@ -453,45 +524,33 @@ function App() {
         )
       )
 
-      const textAttachments = selectedAttachments.filter(
+      const documentAttachments = selectedAttachments.filter(
         attachment =>
-          /\.(txt|md)$/i.test(attachment.file.name)
+          /\.(pdf|docx|txt|md)$/i.test(attachment.file.name)
       )
 
       const extractedTexts = await Promise.all(
-        textAttachments.map(async attachment => {
-          if (attachment.file.size > MAX_TEXT_SIZE) {
-            return (
-              `File: ${attachment.file.name}\n` +
-              'This file is too large to process.'
-            )
-          }
-
-          const text = await attachment.file.text()
-
-          return `File: ${attachment.file.name}\n${text}`
-        })
+        documentAttachments.map(attachment =>
+          extractAttachmentText(attachment.file)
+        )
       )
 
-      // PDF, Word and audio processing will be added later.
-      const unsupportedAttachments =
-        selectedAttachments.filter(
-          attachment =>
-            !attachment.file.type.startsWith('image/') &&
-            !/\.(txt|md)$/i.test(attachment.file.name)
-        )
+      const unsupportedAttachments = selectedAttachments.filter(
+        attachment =>
+          !attachment.file.type.startsWith('image/') &&
+          !/\.(pdf|docx|txt|md)$/i.test(attachment.file.name)
+      )
 
       const attachmentNotes = unsupportedAttachments.map(
         attachment =>
-          `[Attachment: ${attachment.file.name}. ` +
-          'Its contents cannot be analyzed yet.]'
+          `[Attachment: ${attachment.file.name}. Its contents cannot be analyzed yet.]`
       )
 
       const combinedContent = [
         question ||
           (newImages.length > 0
             ? 'Describe the attached image in detail.'
-            : 'Please review the attached content.'),
+            : 'Please summarize the attached document.'),
         ...extractedTexts,
         ...attachmentNotes,
       ].join('\n\n')
@@ -681,8 +740,7 @@ function App() {
           {
             role: 'assistant',
             content:
-              'Something went wrong while contacting Ollama. ' +
-              'Please check that Ollama is running.',
+              `Could not process your request: ${errorMessage}`,
             isError: true,
           },
         ])
@@ -700,10 +758,7 @@ function App() {
     return (
       <div className="attachments-preview">
         {items.map(attachment => (
-          <div
-            className="attachment-card"
-            key={attachment.id}
-          >
+          <div className="attachment-card" key={attachment.id}>
             {attachment.file.type.startsWith('image/') &&
               attachment.previewUrl && (
                 <img
@@ -728,9 +783,7 @@ function App() {
               <button
                 type="button"
                 className="remove-attachment"
-                onClick={() =>
-                  removeAttachment(attachment.id)
-                }
+                onClick={() => removeAttachment(attachment.id)}
                 aria-label={`Remove ${attachment.file.name}`}
               >
                 ✕
@@ -746,9 +799,7 @@ function App() {
     <div className="app">
       <header>
         <h1>🤖 LocalMind AI</h1>
-        <p>
-          Your personal AI assistant, running locally.
-        </p>
+        <p>Your personal AI assistant, running locally.</p>
       </header>
 
       <main className="chat-container">
@@ -764,9 +815,7 @@ function App() {
                 </span>
 
                 <div className="markdown-content">
-                  <ReactMarkdown
-                    remarkPlugins={[remarkGfm]}
-                  >
+                  <ReactMarkdown remarkPlugins={[remarkGfm]}>
                     {message.content}
                   </ReactMarkdown>
                 </div>
@@ -800,25 +849,14 @@ function App() {
 
         {cameraOpen && (
           <div className="camera-panel">
-            <video
-              ref={videoRef}
-              autoPlay
-              playsInline
-              muted
-            />
+            <video ref={videoRef} autoPlay playsInline muted />
 
             <div className="camera-actions">
-              <button
-                type="button"
-                onClick={takePhoto}
-              >
+              <button type="button" onClick={takePhoto}>
                 📸 Take Photo
               </button>
 
-              <button
-                type="button"
-                onClick={closeCamera}
-              >
+              <button type="button" onClick={closeCamera}>
                 Cancel
               </button>
             </div>
@@ -832,9 +870,7 @@ function App() {
           multiple
           hidden
           onChange={event => {
-            addFiles(
-              Array.from(event.target.files || [])
-            )
+            addFiles(Array.from(event.target.files || []))
             event.target.value = ''
           }}
         />
@@ -842,13 +878,11 @@ function App() {
         <input
           ref={filesRef}
           type="file"
-          accept=".pdf,.txt,.md,.doc,.docx"
+          accept=".pdf,.docx,.txt,.md"
           multiple
           hidden
           onChange={event => {
-            addFiles(
-              Array.from(event.target.files || [])
-            )
+            addFiles(Array.from(event.target.files || []))
             event.target.value = ''
           }}
         />
@@ -866,9 +900,7 @@ function App() {
           >
             <textarea
               value={input}
-              onChange={event =>
-                setInput(event.target.value)
-              }
+              onChange={event => setInput(event.target.value)}
               placeholder="Ask LocalMind anything..."
               rows={2}
               disabled={loading}
@@ -889,9 +921,7 @@ function App() {
                 <button
                   type="button"
                   className="plus-button"
-                  onClick={() =>
-                    setMenuOpen(!menuOpen)
-                  }
+                  onClick={() => setMenuOpen(!menuOpen)}
                   aria-label="Add attachment"
                   aria-expanded={menuOpen}
                 >
@@ -902,27 +932,21 @@ function App() {
                   <div className="attachment-menu">
                     <button
                       type="button"
-                      onClick={() =>
-                        galleryRef.current?.click()
-                      }
+                      onClick={() => galleryRef.current?.click()}
                     >
                       🖼️ Gallery
                     </button>
 
                     <button
                       type="button"
-                      onClick={() =>
-                        void openCamera()
-                      }
+                      onClick={() => void openCamera()}
                     >
                       📷 Camera
                     </button>
 
                     <button
                       type="button"
-                      onClick={() =>
-                        filesRef.current?.click()
-                      }
+                      onClick={() => filesRef.current?.click()}
                     >
                       📎 Files
                     </button>
@@ -962,8 +986,7 @@ function App() {
                   className="send-button"
                   disabled={
                     loading ||
-                    (!input.trim() &&
-                      attachments.length === 0)
+                    (!input.trim() && attachments.length === 0)
                   }
                   aria-label="Send message"
                 >
@@ -976,8 +999,7 @@ function App() {
 
         {recording && (
           <p className="recording-status">
-            🔴 Recording audio...
-            Press stop when finished.
+            🔴 Recording audio... Press stop when finished.
           </p>
         )}
       </main>
