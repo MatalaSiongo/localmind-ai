@@ -41,6 +41,8 @@ type OllamaChunk = {
 const TEXT_MODEL = 'llama3.2:1b'
 const VISION_MODEL = 'gemma3:4b'
 
+const TRANSCRIPTION_API = 'http://127.0.0.1:8000/transcribe'
+const MAX_MEDIA_SIZE = 25 * 1024 * 1024
 const MAX_IMAGE_SIZE = 10 * 1024 * 1024
 const MAX_DOCUMENT_SIZE = 5 * 1024 * 1024
 const MAX_DOCUMENT_CHARS = 12000
@@ -172,6 +174,54 @@ async function extractAttachmentText(file: File): Promise<string> {
   return `Document: ${file.name}\n\n${text}`
 }
 
+function isSpeechFile(file: File): boolean {
+  return (
+    file.type.startsWith('audio/') ||
+    file.type.startsWith('video/') ||
+    /\.(mp3|m4a|wav|webm|ogg|flac|mp4|mov|m4v)$/i.test(file.name)
+  )
+}
+
+async function transcribeSpeech(file: File): Promise<string> {
+  if (file.size > MAX_MEDIA_SIZE) {
+    throw new Error(`${file.name}: audio/video must be 25 MB or smaller.`)
+  }
+
+  const formData = new FormData()
+  formData.append('file', file, file.name)
+
+  let response: Response
+  try {
+    response = await fetch(TRANSCRIPTION_API, {
+      method: 'POST',
+      body: formData,
+    })
+  } catch {
+    throw new Error(
+      'Could not reach the transcription service. Start the FastAPI server on port 8000 and try again.'
+    )
+  }
+
+  if (!response.ok) {
+    const body = await response.text()
+    let detail = body
+    try {
+      const parsed = JSON.parse(body) as { detail?: unknown }
+      if (typeof parsed.detail === 'string') detail = parsed.detail
+    } catch {
+      // Preserve the raw error message when the response is not JSON.
+    }
+    throw new Error(`${file.name}: transcription failed (${response.status}). ${detail}`)
+  }
+
+  const result = (await response.json()) as { text?: string; language?: string }
+  const transcript = result.text?.trim()
+  if (!transcript) {
+    throw new Error(`${file.name}: no speech was detected.`)
+  }
+  return `Transcription of ${file.name}${result.language ? ` (language: ${result.language})` : ''}:\n${transcript}`
+}
+
 function buildHistory(
   messages: Message[],
   newImagesPresent: boolean
@@ -230,6 +280,7 @@ function App() {
   const [recording, setRecording] = useState(false)
   const [cameraOpen, setCameraOpen] = useState(false)
   const [mediaError, setMediaError] = useState('')
+  const [speakingMessage, setSpeakingMessage] = useState<number | null>(null)
 
   const galleryRef = useRef<HTMLInputElement>(null)
   const filesRef = useRef<HTMLInputElement>(null)
@@ -242,6 +293,7 @@ function App() {
   const messagesRef = useRef<Message[]>([])
   const chatEndRef = useRef<HTMLDivElement>(null)
   const sendingRef = useRef(false)
+  const speechRef = useRef<SpeechSynthesisUtterance | null>(null)
 
   useEffect(() => {
     attachmentsRef.current = attachments
@@ -264,6 +316,7 @@ function App() {
 
   useEffect(() => {
     return () => {
+      if ('speechSynthesis' in window) window.speechSynthesis.cancel()
       audioStreamRef.current?.getTracks().forEach(track => track.stop())
       cameraStreamRef.current?.getTracks().forEach(track => track.stop())
 
@@ -295,9 +348,14 @@ function App() {
         continue
       }
 
+      if (isSpeechFile(file) && file.size > MAX_MEDIA_SIZE) {
+        rejected.push(`${file.name}: audio/video exceeds 25 MB`)
+        continue
+      }
+
       if (
         !file.type.startsWith('image/') &&
-        !file.type.startsWith('audio/') &&
+        !isSpeechFile(file) &&
         file.size > MAX_DOCUMENT_SIZE
       ) {
         rejected.push(`${file.name}: document exceeds 5 MB`)
@@ -312,7 +370,7 @@ function App() {
       file,
       previewUrl:
         file.type.startsWith('image/') ||
-        file.type.startsWith('audio/')
+        isSpeechFile(file)
           ? URL.createObjectURL(file)
           : undefined,
     }))
@@ -535,9 +593,20 @@ function App() {
         )
       )
 
+      const speechAttachments = selectedAttachments.filter(
+        attachment => isSpeechFile(attachment.file)
+      )
+
+      const transcriptions = await Promise.all(
+        speechAttachments.map(attachment =>
+          transcribeSpeech(attachment.file)
+        )
+      )
+
       const unsupportedAttachments = selectedAttachments.filter(
         attachment =>
           !attachment.file.type.startsWith('image/') &&
+          !isSpeechFile(attachment.file) &&
           !/\.(pdf|docx|txt|md)$/i.test(attachment.file.name)
       )
 
@@ -550,8 +619,11 @@ function App() {
         question ||
           (newImages.length > 0
             ? 'Describe the attached image in detail.'
-            : 'Please summarize the attached document.'),
+            : transcriptions.length > 0
+              ? 'Respond to the following transcribed speech.'
+              : 'Please summarize the attached document.'),
         ...extractedTexts,
+        ...transcriptions,
         ...attachmentNotes,
       ].join('\n\n')
 
@@ -751,6 +823,53 @@ function App() {
     }
   }
 
+  function toggleSpeech(messageIndex: number, text: string) {
+    if (!('speechSynthesis' in window)) {
+      setMediaError('Speech playback is not supported by this browser.')
+      return
+    }
+
+    // Clicking the active speaker stops it; another speaker switches messages.
+    window.speechSynthesis.cancel()
+    speechRef.current = null
+    if (speakingMessage === messageIndex) {
+      setSpeakingMessage(null)
+      return
+    }
+
+    // Strip common Markdown syntax so headings and formatting read naturally.
+    const spokenText = text
+      .replace(/```[\s\S]*?```/g, ' Code block omitted. ')
+      .replace(/!\[([^\]]*)\]\([^)]*\)/g, '$1')
+      .replace(/\[([^\]]+)\]\([^)]*\)/g, '$1')
+      .replace(/[`*_#>~]/g, '')
+      .trim()
+
+    if (!spokenText) return
+    const utterance = new SpeechSynthesisUtterance(spokenText)
+    utterance.rate = 1
+    utterance.pitch = 1
+    utterance.onend = () => {
+      if (speechRef.current === utterance) {
+        speechRef.current = null
+        setSpeakingMessage(null)
+      }
+    }
+    utterance.onerror = event => {
+      if (speechRef.current === utterance) {
+        speechRef.current = null
+        setSpeakingMessage(null)
+        if (event.error !== 'canceled' && event.error !== 'interrupted') {
+          setMediaError(`Speech playback failed: ${event.error}`)
+        }
+      }
+    }
+    speechRef.current = utterance
+    setMediaError('')
+    setSpeakingMessage(messageIndex)
+    window.speechSynthesis.speak(utterance)
+  }
+
   function renderAttachments(
     items: Attachment[],
     removable = false
@@ -769,10 +888,12 @@ function App() {
 
             {attachment.file.type.startsWith('audio/') &&
               attachment.previewUrl && (
-                <audio
-                  controls
-                  src={attachment.previewUrl}
-                />
+                <audio controls src={attachment.previewUrl} />
+              )}
+
+            {attachment.file.type.startsWith('video/') &&
+              attachment.previewUrl && (
+                <video controls preload="metadata" src={attachment.previewUrl} />
               )}
 
             <span className="attachment-name">
@@ -820,6 +941,32 @@ function App() {
                   </ReactMarkdown>
                 </div>
               </div>
+
+              {message.role === 'assistant' && !message.isError && message.content.trim() && (
+                <button
+                  type="button"
+                  onClick={() => toggleSpeech(index, message.content)}
+                  aria-label={speakingMessage === index ? 'Stop reading response' : 'Read response aloud'}
+                  title={speakingMessage === index ? 'Stop speaking' : 'Read aloud'}
+                  aria-pressed={speakingMessage === index}
+                  style={{
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: '6px',
+                    marginTop: '8px',
+                    padding: '6px 10px',
+                    border: '1px solid rgba(160, 175, 210, 0.3)',
+                    borderRadius: '8px',
+                    background: 'rgba(255, 255, 255, 0.06)',
+                    color: 'inherit',
+                    cursor: 'pointer',
+                    fontSize: '13px',
+                  }}
+                >
+                  <span aria-hidden="true">{speakingMessage === index ? '⏹️' : '🔊'}</span>
+                  {speakingMessage === index ? 'Stop' : 'Listen'}
+                </button>
+              )}
 
               {message.attachments &&
                 message.attachments.length > 0 &&
@@ -878,7 +1025,7 @@ function App() {
         <input
           ref={filesRef}
           type="file"
-          accept=".pdf,.docx,.txt,.md"
+          accept=".pdf,.docx,.txt,.md,.mp3,.m4a,.wav,.webm,.ogg,.flac,.mp4,.mov,.m4v,audio/*,video/*"
           multiple
           hidden
           onChange={event => {
