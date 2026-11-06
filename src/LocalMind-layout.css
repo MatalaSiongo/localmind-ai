@@ -1,0 +1,353 @@
+
+/* =========================================
+   LOCALMIND AI — DESKTOP LAYOUT
+   Developed by Francois Matala Siongo
+   ========================================= */
+
+/* Main application layout */
+.localmind-shell {
+  display: flex !important;
+  flex-direction: row !important;
+  width: 100%;
+  height: 100vh;
+  min-height: 0;
+  background: #171717;
+  color: #eeeeee;
+  overflow: hidden;
+}
+
+/* =========================================
+   LEFT SIDEBAR
+   ========================================= */
+
+.lm-sidebar {
+  width: 260px;
+  min-width: 260px;
+  display: flex;
+  flex-direction: column;
+  background: #191919;
+  border-right: 1px solid #343434;
+  padding: 22px 12px 14px;
+  transition: width 0.2s, min-width 0.2s;
+  overflow: hidden;
+  box-sizing: border-box;
+}
+
+.lm-sidebar.collapsed {
+  width: 0;
+  min-width: 0;
+  padding-left: 0;
+  padding-right: 0;
+  border: 0;
+}
+
+/* App branding */
+.lm-brand {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 6px 12px 24px;
+  white-space: nowrap;
+  font-size: 17px;
+}
+
+.lm-brand-icon {
+  display: grid;
+  place-items: center;
+  background: #f4f4f4;
+  color: #171717;
+  width: 42px;
+  height: 42px;
+  border-radius: 13px;
+  font-size: 32px;
+  font-weight: 900;
+}
+
+/* New conversation button */
+.lm-new {
+  text-align: left;
+  padding: 12px 13px;
+  border: 1px solid #383838;
+  background: #282828;
+  color: #f5f5f5;
+  border-radius: 10px;
+  cursor: pointer;
+  font-size: 14px;
+}
+
+.lm-new:hover {
+  background: #343434;
+}
+
+/* Conversation section */
+.lm-section-title {
+  color: #929292;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 1px;
+  padding: 28px 12px 12px;
+}
+
+.lm-conversation-list {
+  overflow-y: auto;
+  flex: 1;
+  min-height: 0;
+}
+
+/* Individual conversation */
+.lm-conversation {
+  display: flex;
+  align-items: center;
+  border-radius: 9px;
+  margin: 3px 0;
+}
+
+.lm-conversation.selected {
+  background: #343434;
+}
+
+.lm-conversation:hover {
+  background: #303030;
+}
+
+.lm-conversation-title {
+  min-width: 0;
+  flex: 1;
+  text-overflow: ellipsis;
+  overflow: hidden;
+  white-space: nowrap;
+  text-align: left;
+  padding: 12px 8px;
+  border: 0;
+  background: transparent;
+  color: #dddddd;
+  cursor: pointer;
+  font-size: 13px;
+}
+
+/* Rename and delete buttons */
+.lm-mini {
+  border: 0;
+  background: transparent;
+  color: #a9a9a9;
+  cursor: pointer;
+  padding: 6px;
+  font-size: 17px;
+}
+
+.lm-mini:hover {
+  color: white;
+}
+
+.lm-delete:hover {
+  color: #ff8585;
+}
+
+/* Bottom sidebar */
+.lm-sidebar-footer {
+  border-top: 1px solid #363636;
+  padding-top: 12px;
+  display: grid;
+  gap: 12px;
+}
+
+.lm-sidebar-footer button {
+  text-align: left;
+  border: 0;
+  background: transparent;
+  color: #c7c7c7;
+  padding: 10px;
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.lm-sidebar-footer button:hover {
+  background: #343434;
+}
+
+.lm-sidebar-footer small {
+  font-size: 10px;
+  color: #858585;
+  padding: 0 10px;
+}
+
+/* =========================================
+   MAIN CHAT AREA
+   ========================================= */
+
+.lm-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+/* Top navigation */
+.lm-topbar {
+  flex: none !important;
+  display: flex !important;
+  align-items: center;
+  justify-content: space-between;
+  height: 70px !important;
+  min-height: 70px;
+  padding: 0 24px !important;
+  background: #1b1b1b !important;
+  border-bottom: 1px solid #2d2d2d !important;
+  text-align: center;
+}
+
+.lm-topbar > div {
+  display: grid;
+  gap: 3px;
+}
+
+.lm-topbar strong {
+  font-size: 15px;
+}
+
+.lm-topbar small {
+  font-size: 11px;
+  color: #999999;
+}
+
+.lm-sidebar-toggle,
+.lm-about-trigger {
+  border: 0;
+  background: transparent;
+  color: #bbbbbb;
+  font-size: 22px;
+  cursor: pointer;
+  padding: 8px;
+}
+
+.lm-sidebar-toggle:hover,
+.lm-about-trigger:hover {
+  color: white;
+}
+
+/* Main chat container */
+.lm-chat {
+  flex: 1 !important;
+  min-height: 0 !important;
+  width: 100% !important;
+  max-width: none !important;
+  margin: 0 !important;
+  padding: 20px clamp(16px, 6vw, 90px) !important;
+  display: flex !important;
+  flex-direction: column !important;
+  background: #1b1b1b !important;
+  box-sizing: border-box;
+}
+
+/* Messages area */
+.lm-chat .messages {
+  flex: 1 !important;
+  min-height: 0 !important;
+  overflow-y: auto !important;
+  width: 100% !important;
+  max-width: 900px !important;
+  margin: 0 auto !important;
+  padding: 10px 0 24px !important;
+}
+
+/* Message cards */
+.lm-chat .message {
+  max-width: 100% !important;
+}
+
+/* Composer at bottom */
+.lm-chat .composer {
+  width: 100% !important;
+  max-width: 900px !important;
+  margin: 0 auto !important;
+  flex-shrink: 0 !important;
+}
+
+/* =========================================
+   WELCOME SCREEN
+   ========================================= */
+
+.lm-welcome {
+  text-align: center;
+  margin: 15vh auto 0;
+  color: #b9b9b9;
+}
+
+.lm-welcome span {
+  font-size: 50px;
+  color: #f1f1f1;
+}
+
+.lm-welcome h2 {
+  color: #eeeeee;
+  font-size: 24px;
+  margin: 10px 0;
+}
+
+.lm-welcome p {
+  font-size: 14px;
+}
+
+/* =========================================
+   ABOUT LOCALMIND MODAL
+   ========================================= */
+
+.lm-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: #000a;
+  display: grid;
+  place-items: center;
+  z-index: 1000;
+  padding: 20px;
+}
+
+.lm-modal {
+  position: relative;
+  background: #282828;
+  border: 1px solid #454545;
+  border-radius: 16px;
+  padding: 30px;
+  max-width: 490px;
+  color: #eaeaea;
+  line-height: 1.6;
+}
+
+.lm-modal-close {
+  position: absolute;
+  right: 14px;
+  top: 10px;
+  border: 0;
+  background: transparent;
+  color: #dddddd;
+  font-size: 26px;
+  cursor: pointer;
+}
+
+.lm-modal-close:hover {
+  color: white;
+}
+
+.lm-modal small {
+  color: #aaaaaa;
+}
+
+/* =========================================
+   RESPONSIVE DESIGN
+   ========================================= */
+
+@media (max-width: 700px) {
+  .lm-sidebar {
+    width: 215px;
+    min-width: 215px;
+  }
+
+  .lm-chat {
+    padding: 12px !important;
+  }
+
+  .lm-topbar {
+    padding: 0 12px !important;
+  }
+}
